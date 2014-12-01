@@ -364,16 +364,60 @@ sub mlroot {
   $main->mlroot;
 }
 
-# package PAUSE::dist;
 sub mail_summary {
   my($self) = @_;
-  my $distro = $self->{DIST};
-  my $author = PAUSE::dir2user($distro);
-  my @m;
-
-  push @m,
+  my $author = PAUSE::dir2user($self->{DIST});
+  my $substrdistro = substr $self->{DIST}, 5;
+  my($distrobasename) = $substrdistro =~ m|.*/(.*)|;
+  my $dbh = $self->connect;
+  my $sth = $dbh->prepare("SELECT asciiname, fullname
+    FROM   users
+    WHERE userid=?");
+  $sth->execute($author);
+  my($u) = $sth->fetchrow_hashref;
+  my $asciiname = $u->{asciiname} // $u->{fullname} // "name unknown";
+  my ($status_over_all, @m) = $self->make_summary($author, $asciiname, $distrobasename);
+  return unless @m;
+  unshift @m,
     "The following report has been written by the PAUSE namespace indexer.\n",
     "Please contact modules\@perl.org if there are any open questions.\n";
+  my $pma = PAUSE::MailAddress->new_from_userid($author);
+  if ($PAUSE::Config->{TESTHOST} || $self->{MAIN}{OPT}{testhost}) {
+    if ($self->{PICK}) {
+      local $"="";
+      warn "Unsent Report [@m]";
+    }
+  } else {
+    my $to = sprintf "%s, %s", $pma->address, $PAUSE::Config->{ADMIN};
+    my $failed = "";
+    if ($status_over_all ne "OK") {
+      $failed = "Failed: ";
+    }
+
+    my $email = Email::MIME->create(
+        header_str => [
+            To      => $to,
+            Subject => $failed."PAUSE indexer report $substrdistro",
+            From    => "PAUSE <$PAUSE::Config->{UPLOAD}>",
+        ],
+        attributes => {
+          charset      => 'utf-8',
+          content_type => 'text/plain',
+          encoding     => 'quoted-printable',
+        },
+        body_str => join( ($, // q{}) , @m),
+    );
+
+    sendmail($email);
+
+    $self->verbose(1,"Sent \"indexer report\" mail about $substrdistro\n");
+  }
+}
+
+sub make_summary {
+  my ($self, $author, $asciiname, $distrobasename) = @_;
+  my $distro = $self->{DIST};
+  my @m;
 
   if ($self->has_indexing_warnings) {
     push @m,
@@ -386,15 +430,6 @@ sub mail_summary {
   my $mtime = gmtime((stat "$MLROOT/$distro")[9]);
   my $nfiles = scalar @{ $self->{MANIFOUND} // [] };
   my $pmfiles = grep /\.pm$/, @{$self->{MANIFOUND}};
-  my $dbh = $self->connect;
-  my $sth = $dbh->prepare("SELECT asciiname, fullname
-    FROM   users
-    WHERE userid=?");
-  $sth->execute($author);
-  my($u) = $sth->fetchrow_hashref;
-  my $asciiname = $u->{asciiname} // $u->{fullname} // "name unknown";
-  my $substrdistro = substr $distro, 5;
-  my($distrobasename) = $substrdistro =~ m|.*/(.*)|;
   my $versions_from_meta = $self->version_from_meta_ok ? "yes" : "no";
   my $parse_cpan_meta_version = Parse::CPAN::Meta->VERSION;
 
@@ -564,43 +599,13 @@ sub mail_summary {
         }
       } else {
         # no need to write a report at all
-        return;
+        return $status_over_all;
       }
 
     }
   }
   push @m, qq{__END__\n};
-  my $pma = PAUSE::MailAddress->new_from_userid($author);
-  if ($PAUSE::Config->{TESTHOST} || $self->{MAIN}{OPT}{testhost}) {
-    if ($self->{PICK}) {
-      local $"="";
-      warn "Unsent Report [@m]";
-    }
-  } else {
-    my $to = sprintf "%s, %s", $pma->address, $PAUSE::Config->{ADMIN};
-    my $failed = "";
-    if ($status_over_all ne "OK") {
-      $failed = "Failed: ";
-    }
-
-    my $email = Email::MIME->create(
-        header_str => [
-            To      => $to,
-            Subject => $failed."PAUSE indexer report $substrdistro",
-            From    => "PAUSE <$PAUSE::Config->{UPLOAD}>",
-        ],
-        attributes => {
-          charset      => 'utf-8',
-          content_type => 'text/plain',
-          encoding     => 'quoted-printable',
-        },
-        body_str => join( ($, // q{}) , @m),
-    );
-
-    sendmail($email);
-
-    $self->verbose(1,"Sent \"indexer report\" mail about $substrdistro\n");
-  }
+  ($status_over_all, @m);
 }
 
 # package PAUSE::dist;
