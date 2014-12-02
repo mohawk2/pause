@@ -4,6 +4,10 @@ package PAUSE::pmfile;
 use vars qw($AUTOLOAD);
 use version (); # to get $version::STRICT
 use PAUSE ();
+use CPAN::Version ();
+use Dumpvalue;
+use Safe;
+use PAUSE::package ();
 
 BEGIN { die "Version of version.pm too low ($version::VERSION), does not define STRICT"
             unless defined $version::STRICT }
@@ -123,7 +127,7 @@ sub filter_ppps {
 # package PAUSE::pmfile;
 sub examine_fio {
     # fio: file object
-    my $self = shift;
+    my ($self, $dbconnect) = @_;
     my $dist = $self->{DIO}{DIST};
     my $dbh = $self->connect;
     my $pmfile = $self->{PMFILE};
@@ -173,7 +177,7 @@ sub examine_fio {
                   META_CONTENT => $self->{META_CONTENT},
                   );
 
-        $pio->examine_pkg;
+        $pio->examine_pkg($dbconnect);
 
     }                       # end foreach package
 
@@ -508,7 +512,7 @@ sub normalize_version {
     $v = "undef" unless defined $v;
     my $dv = Dumpvalue->new;
     my $sdv = $dv->stringify($v,1); # second argument prevents ticks
-    $self->verbose(1,"Result of normalize_version: sdv[$sdv]\n");
+    $self->verbose(1,"Result of normalize_version: $self->{PMFILE}=sdv[$sdv]\n");
 
     return $v if $v eq "undef";
     return $v if $v =~ /^\{.*\}$/; # JSON object

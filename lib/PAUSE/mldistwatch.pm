@@ -4,7 +4,7 @@ package PAUSE::mldistwatch;
 use strict;
 use version 0.47; # 0.46 had leading whitespace and ".47" problems
 
-use CPAN (); # only for CPAN::Version
+use CPAN::Version ();
 use CPAN::Checksums 1.050; # 1.050 introduced atomic writing
 use CPAN::DistnameInfo ();
 use Cwd ();
@@ -465,7 +465,7 @@ sub check_for_new {
               $dbh->rollback;
             }
           } else {
-            $dio->examine_pms;      # will switch user
+            $dio->examine_pms(1);      # will switch user
 
             my $main_pkg = $dio->_package_governing_permission;
 

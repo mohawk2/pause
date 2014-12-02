@@ -2,6 +2,7 @@ use strict;
 use warnings;
 package PAUSE::package;
 use vars qw($AUTOLOAD);
+use Data::Dumper ();
 use PAUSE::mldistwatch::Constants;
 
 =comment
@@ -288,7 +289,7 @@ sub _pkg_name_insane {
 
 # package PAUSE::package;
 sub examine_pkg {
-  my $self = shift;
+  my ($self, $dbconnect) = @_;
 
   my $dbh = $self->connect;
   my $package = $self->{PACKAGE};
@@ -306,13 +307,15 @@ sub examine_pkg {
 
   # set perms for registered owner in any case
 
-  $self->give_regdowner_perms; # (P1.0)
+  $self->give_regdowner_perms if $dbconnect; # (P1.0)
 
   # Query all users with perms for this package
 
-  unless ($self->perm_check){ # (P2.0&P3.0)
+  if ($dbconnect) {
+    unless ($self->perm_check){ # (P2.0&P3.0)
       delete $self->{FIO};    # circular reference
       return;
+    }
   }
 
   # Check that package name matches case of file name
@@ -378,7 +381,7 @@ sub examine_pkg {
       }
   }
 
-  $self->checkin;
+  $self->checkin if $dbconnect;
   delete $self->{FIO};    # circular reference
 }
 

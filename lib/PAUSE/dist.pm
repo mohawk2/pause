@@ -9,6 +9,9 @@ use List::MoreUtils ();
 use PAUSE ();
 use Parse::CPAN::Meta;
 use PAUSE::mldistwatch::Constants;
+use Text::Format;
+use ExtUtils::Manifest;
+use PAUSE::pmfile ();
 
 # ISA_REGULAR_PERL means a perl release for public consumption
 # (and must exclude developer releases like 5.9.4). I need to
@@ -821,7 +824,7 @@ sub _package_governing_permission {
 }
 
 sub _index_by_files {
-  my ($self, $pmfiles, $provides) = @_;
+  my ($self, $pmfiles, $provides, $dbconnect) = @_;
   my $dist = $self->{DIST};
 
   my $binary_dist;
@@ -849,12 +852,12 @@ sub _index_by_files {
       USERID => $self->{USERID},
       META_CONTENT => $self->{META_CONTENT},
     );
-    $fio->examine_fio;
+    $fio->examine_fio($dbconnect);
   }
 }
 
 sub _index_by_meta {
-  my ($self, $pmfiles, $provides) = @_;
+  my ($self, $pmfiles, $provides, $dbconnect) = @_;
   my $dist = $self->{DIST};
 
   while (my($k,$v) = each %$provides) {
@@ -892,13 +895,14 @@ sub _index_by_meta {
       USERID => $self->{USERID},
       META_CONTENT => $self->{META_CONTENT},
     );
-    $pio->examine_pkg;
+    $pio->examine_pkg($dbconnect);
   }
 }
 
 # package PAUSE::dist;
 sub examine_pms {
-  my $self = shift;
+  my ($self, $dbconnect) = @_;
+  die "Must provide \$dbconnect\n" unless defined $dbconnect;
   return if $self->{HAS_BLIB};
   return if $self->{HAS_MULTIPLE_ROOT};
   return if $self->{HAS_WORLD_WRITABLE};
@@ -925,7 +929,7 @@ sub examine_pms {
   }
 
   if ($indexing_method) {
-    $self->$indexing_method($pmfiles, $provides);
+    $self->$indexing_method($pmfiles, $provides, $dbconnect);
   } else {
     $self->alert("Does this work out elsewhere? Neither yaml nor pmfiles indexing in dist[$dist]???");
   }
@@ -960,16 +964,36 @@ sub read_dist {
   $self->verbose(1,"Found $manifound files in dist $dist, first $manifind[0]\n");
 }
 
-# package PAUSE::dist;
+sub _copy {
+  my ($self, $from, $to) = @_;
+  File::Copy::copy $from, $to;
+  utime((stat $from)[8,9], $to);
+  PAUSE::newfile_hook($to);
+}
+
 sub extract_readme_and_meta {
   my $self = shift;
-  my($suffix) = $self->{SUFFIX};
-  return unless $suffix;
-  my $dist = $self->{DIST};
   my $MLROOT = $self->mlroot;
+  my $sans = $self->_sans;
+  my $readme = $self->find_readme;
+  $self->_copy($readme, "$MLROOT/$sans.readme");
+  my $metafile = $self->find_meta;
+  $self->_copy($metafile, "$MLROOT/$sans.meta");
+}
+
+sub _sans {
+  my ($self) = @_;
+  my($sans) = $self->{DIST} =~ /(.*)\.\Q$self->{SUFFIX}\E$/;
+  $sans;
+}
+
+sub find_readme {
+  my $self = shift;
+  return unless $self->{SUFFIX};
+  my $found_readme;
   my @manifind = @{$self->{MANIFOUND}};
   my(@readme) = grep /(^|\/)readme/i, @manifind;
-  my($sans) = $dist =~ /(.*)\.\Q$suffix\E$/;
+  my $sans = $self->_sans;
   if (@readme) {
     my $readme;
     if ($sans =~ /-bin-?(.*)/) {
@@ -987,14 +1011,21 @@ sub extract_readme_and_meta {
     for (1..$#readme) {
       $readme = $readme[$_] if length($readme[$_]) < length($readme);
     }
+    $found_readme = $readme;
     $self->{README} = $readme;
-    File::Copy::copy $readme, "$MLROOT/$sans.readme";
-    utime((stat $readme)[8,9], "$MLROOT/$sans.readme");
-    PAUSE::newfile_hook("$MLROOT/$sans.readme");
   } else {
     $self->{README} = "No README found";
-    $self->verbose(1,"No readme in $dist\n");
+    $self->verbose(1,"No readme in $self->{DIST}\n");
   }
+  $found_readme;
+}
+
+sub find_meta {
+  my $self = shift;
+  return unless $self->{SUFFIX};
+  my $found_meta;
+  my @manifind = @{$self->{MANIFOUND}};
+  my $sans = $self->_sans;
   my ($json, $yaml);
   if ($self->perl_major_version == 6) {
     $json = List::Util::reduce { length $a < length $b ? $a : $b }
@@ -1009,7 +1040,7 @@ sub extract_readme_and_meta {
 
   unless ($json || $yaml) {
     $self->{METAFILE} = "No META.yml or META.json found";
-    $self->verbose(1,"No META.yml or META.json in $dist");
+    $self->verbose(1,"No META.yml or META.json in $self->{DIST}");
     return;
   }
 
@@ -1021,14 +1052,13 @@ sub extract_readme_and_meta {
 
   for my $metafile ($json || $yaml) {
     if (-s $metafile) {
+      $found_meta = $metafile;
       $self->{METAFILE} = $metafile;
-      File::Copy::copy $metafile, "$MLROOT/$sans.meta";
-      utime((stat $metafile)[8,9], "$MLROOT/$sans.meta");
-      PAUSE::newfile_hook("$MLROOT/$sans.meta");
       my $ok = eval {
         $self->{META_CONTENT} = Parse::CPAN::Meta->load_file($metafile); 1
       };
       unless ($ok) {
+	$found_meta = undef;
         $self->verbose(1,"Error while parsing $metafile: $@");
         $self->{META_CONTENT} = {};
         $self->{METAFILE} = "$metafile found but error "
@@ -1038,6 +1068,7 @@ sub extract_readme_and_meta {
       $self->{METAFILE} = "Empty $metafile found, ignoring\n";
     }
   }
+  $found_meta;
 }
 
 # package PAUSE::dist
