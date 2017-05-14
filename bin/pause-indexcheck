@@ -1,0 +1,64 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+
+use PAUSE::dist ();
+use File::Spec;
+use File::Basename;
+use Cwd;
+use Getopt::Long;
+
+my $verbose;
+$PAUSE::Config = {
+  LOG_CALLBACK => sub { splice @_, 0, 2; warn @_ if $verbose },
+  ML_CHOWN_USER => scalar(getpwuid $<),
+  ML_CHOWN_GROUP => scalar(getgrgid $<),
+};
+sub PAUSE::Fake::mlroot { '.' }
+sub PAUSE::Fake::connect { +{} }
+sub PAUSE::Fake::disconnect { }
+
+GetOptions("verbose"  => \$verbose) or die("Error in command line arguments\n");
+my $dir = $ARGV[0] // File::Spec->curdir;
+die "$dir: $!" unless chdir $dir;
+$dir = basename getcwd;
+#chdir File::Spec->updir;
+my $dio = PAUSE::dist->new(
+  DIST => "$dir.tar.gz", MAIN => bless({}, 'PAUSE::Fake'), SUFFIX => 'tar.gz',
+  CHOWN_UNSAFE_DONE => 1,
+);
+die "Required to skip\n" if $dio->skip;
+$dio->read_dist;
+$dio->{MANIFOUND} = [ map "$dir/$_", @{$dio->{MANIFOUND}} ];
+chdir File::Spec->updir;
+$dio->find_meta;
+$dio->find_readme;
+$dio->check_blib;
+$dio->check_world_writable;
+$dio->examine_pms(0);
+print "Using version from metadata\n" if $dio->version_from_meta_ok;
+print join "\n", $dio->make_summary('You', '', $dir);
+
+__END__
+
+=head1 NAME
+
+pause-indexcheck - Run same checks on a distdir that PAUSE would
+
+=head1 SYNOPSIS
+
+  pause-indexcheck [dir]
+
+=head1 DESCRIPTION
+
+Uses the same code used by PAUSE to run the same checks on either the
+given C<distdir>, or the current directory. Simples.
+
+=head1 SEE ALSO
+
+L<PAUSE>, L<PAUSE::dist>.
+
+=head1 AUTHOR
+
+Ed J
